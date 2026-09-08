@@ -1,0 +1,6 @@
+fsmstable	https://github.com/denyingmxd/FSM_stable.git (fetch)
+fsmstable	https://github.com/denyingmxd/FSM_stable.git (push)
+origin	git@github.com:lylim0417/CVCDepth-POConv.git (fetch)
+origin	git@github.com:lylim0417/CVCDepth-POConv.git (push)
+upstream	https://github.com/denyingmxd/CVCDepth.git (fetch)
+upstream	https://github.com/denyingmxd/CVCDepth.git (push)
