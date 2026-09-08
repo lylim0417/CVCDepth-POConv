@@ -127,7 +127,11 @@ class DDADdataset(torch.utils.data.Dataset):
             with open('./dataset/ddad/{}.txt'.format(mode), 'r') as f:
                 self.filenames = f.readlines()
 
-        self.rgb_path = '/data/laiyan/ssd/ddad/raw_data/'
+        # Reproduction portability patch.
+        self.rgb_path = cfg['data']['rgb_root']
+        self.rgb_ext = cfg['data'].get('rgb_ext', '.jpg')
+
+        # Original paths retained for now; GT depth is not accessed in train mode.
         self.depth_path = '/data/laiyan/ssd/ddad/depth'
         self.match_path = '/data/laiyan/ssd/ddad/match'
         cur_path = os.path.dirname(os.path.realpath(__file__))
@@ -165,7 +169,7 @@ class DDADdataset(torch.utils.data.Dataset):
         for index_spatial,cam in enumerate(self.cameras):
 
             rgb_filename = os.path.join(self.rgb_path, scene_name, 'rgb',
-                                self.cameras[index_spatial], index_temporal + '.jpg')
+                                self.cameras[index_spatial], index_temporal + self.rgb_ext)
             filename = scene_name+'/'+'{}'+'/'+cam+'/'+index_temporal
             data = {
                 'idx': idx,
@@ -219,7 +223,7 @@ class DDADdataset(torch.utils.data.Dataset):
                     index_temporal_i = self.info[index_temporal]['context'][iddddx]
 
                     rgb_context_filename = os.path.join(self.rgb_path, scene_name, 'rgb',
-                                                self.cameras[index_spatial], index_temporal_i + '.jpg')
+                                                self.cameras[index_spatial], index_temporal_i + self.rgb_ext)
                     rgb_context = pil_loader(rgb_context_filename)
                     rgb_contexts.append(rgb_context)
                 data.update({
