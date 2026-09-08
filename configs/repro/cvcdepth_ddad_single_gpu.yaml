@@ -50,6 +50,7 @@ training:
   intensity_align: true
   focal_length_scale: 300
   flip_version: 5
+  gradient_accumulation_steps: 4
 loss:
   disparity_smoothness: 0.1
   spatio_coeff: 0.03

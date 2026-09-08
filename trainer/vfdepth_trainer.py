@@ -55,23 +55,135 @@ class VFDepthTrainer:
         
     def train(self, model, data_loader, start_time):
         """
-        This function trains models.
+        Train one epoch.
+
+        For single-GPU reproduction we optionally use gradient
+        accumulation so that batch_size=1 can preserve the published
+        effective optimizer batch without exercising the repository's
+        batch_size>1 path.
         """
-        # torch.autograd.set_detect_anomaly(True)
         model.set_train()
-        a=time.time()
-        times=[]
+
+        accum_steps = int(
+            getattr(self, 'gradient_accumulation_steps', 1)
+        )
+
+        if accum_steps < 1:
+            raise ValueError(
+                "gradient_accumulation_steps must be >= 1"
+            )
+
+        num_batches = len(data_loader)
+
+        if self.rank == 0:
+            print(
+                "Gradient accumulation:",
+                accum_steps,
+                "| dataloader batches:",
+                num_batches,
+            )
+
+        model.optimizer.zero_grad(set_to_none=True)
+
+        a = time.time()
+        times = []
+
+        # Scalar losses accumulated only for logging.
+        scalar_loss_sums = {}
+
+        group_start_time = time.time()
+
         for batch_idx, inputs in enumerate(data_loader):
-            before_op_time = time.time()
-            model.optimizer.zero_grad(set_to_none=True)
-            outputs, losses = model.process_batch(inputs, self.rank)
-            losses['total_loss'].backward()
+
+            # Size of the current accumulation group.
+            #
+            # DDAD has 12319 samples, so the final group contains
+            # 3 samples rather than 4. Divide that group by 3,
+            # not by 4.
+            group_start = (
+                batch_idx // accum_steps
+            ) * accum_steps
+
+            group_size = min(
+                accum_steps,
+                num_batches - group_start
+            )
+
+            outputs, losses = model.process_batch(
+                inputs,
+                self.rank
+            )
+
+            total_loss = losses['total_loss']
+
+            if not torch.isfinite(total_loss):
+                raise RuntimeError(
+                    "Non-finite total loss at "
+                    "batch {}".format(batch_idx)
+                )
+
+            # Average gradients over this effective optimizer batch.
+            (
+                total_loss / float(group_size)
+            ).backward()
+
+            # Collect scalar diagnostics for the effective batch.
+            for key, value in losses.items():
+                if (
+                    torch.is_tensor(value)
+                    and value.numel() == 1
+                ):
+                    scalar_loss_sums[key] = (
+                        scalar_loss_sums.get(key, 0.0)
+                        + float(value.detach())
+                    )
+
+            is_update_boundary = (
+                ((batch_idx + 1) % accum_steps == 0)
+                or
+                ((batch_idx + 1) == num_batches)
+            )
+
+            if not is_update_boundary:
+                continue
+
+            # --------------------------------------------------
+            # One optimizer update = one effective batch.
+            # --------------------------------------------------
             model.optimizer.step()
+            model.optimizer.zero_grad(set_to_none=True)
+
             after_op_time = time.time()
-            import numpy as np
+
             if self.rank == 0:
-                times.append(after_op_time - before_op_time)
-                print(batch_idx, np.sum(times),after_op_time - before_op_time, (time.time() - a) / (1 + batch_idx))
+
+                # Use effective-batch-average scalar losses in logs.
+                log_losses = dict(losses)
+
+                for key, value_sum in scalar_loss_sums.items():
+                    log_losses[key] = torch.tensor(
+                        value_sum / float(group_size),
+                        device=total_loss.device,
+                    )
+
+                times.append(
+                    after_op_time - group_start_time
+                )
+
+                print(
+                    "batch",
+                    batch_idx,
+                    "| opt_step",
+                    self.step,
+                    "| group_size",
+                    group_size,
+                    "| elapsed",
+                    sum(times),
+                    "| group_time",
+                    after_op_time - group_start_time,
+                    "| avg sec/microbatch",
+                    (time.time() - a) / (1 + batch_idx),
+                )
 
                 self.logger.update(
                     'train',
@@ -80,22 +192,25 @@ class VFDepthTrainer:
                     batch_idx,
                     self.step,
                     start_time,
-                    before_op_time,
+                    group_start_time,
                     inputs,
                     outputs,
-                    losses
+                    log_losses
                 )
-
-                # if self.logger.is_checkpoint(self.step):
-                #     self.validate(model)
 
             if self.ddp_enable:
                 dist.barrier()
 
+            # Important: this now counts OPTIMIZER UPDATES,
+            # not microbatches.
             self.step += 1
 
+            scalar_loss_sums = {}
+            group_start_time = time.time()
+
+        # Preserve the author's epoch-level LR scheduling.
         model.lr_scheduler.step()
-        
+
     @torch.no_grad()
     def validate(self, model):
         """
