@@ -27,6 +27,9 @@ data:
   val_requirements: (gt_pose, gt_depth, mask)
   rgb_root: /data/ddad
   rgb_ext: .png
+  depth_root: /data/ddad
+  depth_subdir: depth/lidar
+  depth_key: depth
 training:
   height: 384
   width: 640

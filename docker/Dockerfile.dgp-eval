@@ -1,0 +1,20 @@
+FROM cvcdepth:repro
+
+USER root
+
+# pycocotools may require compilation depending on the wheel
+# available for Python 3.8.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        --no-install-recommends \
+        build-essential \
+        python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY docker/requirements-dgp-eval.txt \
+     /tmp/requirements-dgp-eval.txt
+
+RUN python3 -m pip install \
+        --no-cache-dir \
+        -r /tmp/requirements-dgp-eval.txt && \
+    rm /tmp/requirements-dgp-eval.txt

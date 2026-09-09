@@ -132,7 +132,20 @@ class DDADdataset(torch.utils.data.Dataset):
         self.rgb_ext = cfg['data'].get('rgb_ext', '.jpg')
 
         # Original paths retained for now; GT depth is not accessed in train mode.
-        self.depth_path = '/data/laiyan/ssd/ddad/depth'
+        # Evaluation-only projected LiDAR depth.
+        self.depth_path = cfg['data'].get(
+            'depth_root',
+            self.rgb_path
+        )
+        self.depth_subdir = cfg['data'].get(
+            'depth_subdir',
+            'depth/lidar'
+        )
+        self.depth_key = cfg['data'].get(
+            'depth_key',
+            'depth'
+        )
+
         self.match_path = '/data/laiyan/ssd/ddad/match'
         cur_path = os.path.dirname(os.path.realpath(__file__))
         self.mask_path = os.path.join(cur_path, 'ddad_mask')
@@ -190,11 +203,20 @@ class DDADdataset(torch.utils.data.Dataset):
                                 self.cameras[index_spatial], index_temporal + '.npz'))['arr_0'][None,:]
                     })
                 else:
+                    depth_filename = os.path.join(
+                        self.depth_path,
+                        scene_name,
+                        self.depth_subdir,
+                        self.cameras[index_spatial],
+                        index_temporal + '.npz'
+                    )
+
                     data.update({
-                        'depth': np.load(os.path.join(self.depth_path, scene_name, 'depth',
-                                                         self.cameras[index_spatial], index_temporal + '.npz'))[
-                                        'arr_0'][None, :]
+                        'depth': np.load(
+                            depth_filename
+                        )[self.depth_key][None, :]
                     })
+
             # if depth is returned
             if self.with_input_depth:
                 data.update({

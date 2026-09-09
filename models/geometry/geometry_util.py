@@ -2,7 +2,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from pytorch3d.transforms import axis_angle_to_matrix
 from collections import Counter
 def sub2ind(matrixSize, rowSub, colSub):
     """Convert row, col matrix subscripts to linear indices
@@ -10,6 +9,66 @@ def sub2ind(matrixSize, rowSub, colSub):
     m, n = matrixSize
     return rowSub * (n-1) + colSub - 1
         
+
+def axis_angle_to_matrix_stable(axis_angle):
+    """
+    Differentiable axis-angle -> rotation matrix conversion.
+
+    Uses a quaternion intermediate and an explicit small-angle
+    approximation to remain well behaved around zero rotation.
+    """
+    angles = torch.norm(axis_angle, p=2, dim=-1, keepdim=True)
+    half_angles = 0.5 * angles
+
+    eps = 1e-6
+    small = angles.abs() < eps
+
+    scale = torch.empty_like(angles)
+
+    # Normal-angle branch
+    scale[~small] = (
+        torch.sin(half_angles[~small])
+        / angles[~small]
+    )
+
+    # sin(theta/2)/theta Taylor expansion near theta = 0
+    scale[small] = (
+        0.5
+        - (angles[small] * angles[small]) / 48.0
+    )
+
+    q = torch.cat(
+        [
+            torch.cos(half_angles),
+            axis_angle * scale
+        ],
+        dim=-1
+    )
+
+    r, i, j, k = torch.unbind(q, dim=-1)
+
+    two_s = 2.0 / (q * q).sum(dim=-1)
+
+    R = torch.stack(
+        [
+            1 - two_s * (j*j + k*k),
+            two_s * (i*j - k*r),
+            two_s * (i*k + j*r),
+
+            two_s * (i*j + k*r),
+            1 - two_s * (i*i + k*k),
+            two_s * (j*k - i*r),
+
+            two_s * (i*k - j*r),
+            two_s * (j*k + i*r),
+            1 - two_s * (i*i + j*j),
+        ],
+        dim=-1
+    )
+
+    return R.reshape(axis_angle.shape[:-1] + (3, 3))
+
+
 def vec_to_matrix(rot_angle, trans_vec, invert=False):
     """
     This function transforms rotation angle and translation vector into 4x4 matrix.
@@ -19,7 +78,7 @@ def vec_to_matrix(rot_angle, trans_vec, invert=False):
     R_mat = torch.eye(4).repeat([b, 1, 1]).to(device=rot_angle.device)
     T_mat = torch.eye(4).repeat([b, 1, 1]).to(device=rot_angle.device)
 
-    R_mat[:, :3, :3] = axis_angle_to_matrix(rot_angle).squeeze(1)
+    R_mat[:, :3, :3] = axis_angle_to_matrix_stable(rot_angle.reshape(-1, 3))
     t_vec = trans_vec.clone().contiguous().view(-1, 3, 1)
 
     if invert == True:
